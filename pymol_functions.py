@@ -49,7 +49,8 @@ def draw_caver_mesh(obj_name, cluster_suffix, b=1.4, cutoff=3):
     cmd.show('mesh', 'final_object')
 
 # Function to get the average side chain B-factor. Useful if you want to look
-# at an average B-factor for side chains
+# at an average B-factor for side chains. Requires that you have a structure
+# loaded in PyMol.
 # Input: a string representation of your PyMol selection
 # Output: two lists. First list contains the position. Second list contains
 # average B-factor for the side chain at that position
@@ -98,8 +99,9 @@ def get_avg_sc_b(selection):
 # Returns:
 # - Pandas Dataframe containing the average side chain b-factor for the selection
 # in each structure you input and columns containing Mean and Standard Deviation
-# b-factors along with the normalized versions. The normalization is not trustworthy
-# for now due to not normalizing across all amino acids.
+# b-factors along with the normalized versions. Normalizes using the maximum
+# b-factor from all amino acids
+# Requires: get_avg_sc_b, protein_b_stats, Pandas
 def bfac_comp(struct_list, extra_select):
     # Loop through all the structures to get the data and identify if there 
     # is a "largest" structure
@@ -124,7 +126,7 @@ def bfac_comp(struct_list, extra_select):
         else:
             # Loop through the missing keys and fill in the value from the larger
             # structure
-            missing_keys = set(bfac_dict[longest_name].keys()) - 
+            missing_keys = set(bfac_dict[longest_name].keys()) - \
             set(bfac_dict[struct].keys())
             for key in missing_keys:
                 bfac_dict[struct][key] = bfac_dict[longest_name][key]
@@ -144,10 +146,31 @@ def bfac_comp(struct_list, extra_select):
     # Calculate normalized values to put it all on the same scale 
     # and compare differences more clearly
     for struct in backup_struct_list:
-        b_df[struct + '_norm'] = b_df[struct]/b_df[struct].max()
+        norm_factor = protein_b_stats(stuct)[-1]
+        b_df[struct + '_norm'] = b_df[struct]/norm_factor
     b_df['Norm. Mean B'] = b_df[
             [x + '_norm' for x in backup_struct_list]].mean(axis = 1)
     b_df['Norm. Std. Dev. B'] = b_df[
             [x + '_norm' for x in backup_struct_list]].std(axis = 1)
     
     return b_df
+
+# Function to get basic B-factor statistics for protein molecules using pandas 
+# Input:
+# - object name
+# Output: pandas series produced by pandas.Series.describe()
+# count    
+# mean     
+# std      
+# min      
+# 25%      
+# 50%      
+# 75%      
+# max      
+def protein_b_stats(obj_name):
+    myspace = {'bfactor': []}
+    # Get the b-factor for every protein atom
+    cmd.iterate(obj_name + ' and polymer.protein', 'bfactor.append(b)',
+                space=myspace)
+    return pd.Series(myspace['bfactor']).describe()
+
