@@ -174,3 +174,143 @@ def protein_b_stats(obj_name):
                 space=myspace)
     return pd.Series(myspace['bfactor']).describe()
 
+'''
+keyRes function is designed to get the original positions of amino acids in a
+multiple sequence alignment given a a list of positions for the reference
+sequence. This should help when you need to write about what the amino acid
+position is in a homologous sequence.
+
+**Warning!**
+This function only works if your reference sequence is the first sequence in
+the alignment.
+
+Inputs:
+    - A BioPython alignment object containing your MSA
+    - A string with what your reference sequence id in it
+    - A list of offsets in case your structure sequences differ from your
+    MSA sequences in length. This helps when getting the resi value you need
+    in PyMol so you can select the appropriate sequence. You can use the
+    get_seq_offset function to generate the data you need.
+
+output:
+    - A dictionary where the keys are the sequence ids from the alignment object
+    and the values are lists with the one letter code and the position such as
+    'N100'. A dictionary was chosen to maximize output flexibility and avoid
+    depending on external packages.
+'''
+
+def keyRes(alignment, refid: str, keyPos: list[int], 
+           offset: list[int] = [0]) -> dict:
+    # input sequence alignment object
+    # Initiate a count for however many sequences are present
+    num_seq = len(alignment[:, 0])
+    counts = [0]*num_seq
+    if len(offset) > 1:
+        counts = offset
+    # get sequence ids from the alignment file: seq.id
+    # use the sequence ids/names to make a dictionary
+    aligned_pos = {x.id:[] for x in alignment}
+    # Also keep a list of ids
+    names = aligned_pos.keys()
+
+    for pos in range(0, len(alignment[0])):
+        # string representing the current column 
+        current_col = alignment[:, pos]
+        # set False after going through all sequences
+        importantPos = False
+        for idx, res, seqname in zip(range(0, num_seq), current_col, names):
+            nogap = res != '-'
+            if nogap:
+                counts[idx]+=1
+            # assuming reference seq is first and gaps are not important
+            if seqname == refid and counts[idx] in keyPos and nogap:
+               importantPos = True
+               aligned_pos[seqname].append(res+str(counts[idx]))
+               continue
+            if importantPos:
+                if nogap:
+                    aligned_pos[seqname].append(res+str(counts[idx]))
+                else:
+                    aligned_pos[seqname].append(res)
+                continue
+
+    return aligned_pos
+
+
+'''
+get_seq_offset is a function to handle differences in sequence between a structure
+and its Uniprot sequence. It simply downloads the canonical PDB sequence and the
+corresponding Uniprot sequence for the Uniprot entry and takes the difference in
+length. You can set it to produce values relative to the PDB sequence or the
+Uniprot sequence. The default is to take it relative to the Uniprot sequence so
+the previous function, keyRes, can output the correct sequence position based on
+an MSA generated from Uniprot sequences.
+
+This function was designed to only require the requests package installed to
+minimize dependences.
+
+Inputs:
+    - A list of PDB ids for structures whose sequences you can to get offsets
+    for.
+    - A boolean whether you want the offset to be relative to the Uniprot
+    sequence (default) or relative to the PDB sequence.
+
+output:
+    - A dictionary where the keys are the PDB ids and the value is an int with
+    the offset. A dictionary was chosen to maximize flexibility and this can
+    easily be adapted to an ordered data structure as needed.
+'''
+
+def get_seq_offset(pdb_ids_list: list[str], uniprot_align: bool = True) -> dict:
+    
+    import json
+    import requests
+    #Set base url
+    rcsb_request_url = 'https://data.rcsb.org/graphql?query=<query>'
+    # Open request template from file
+    request_template = '{\
+      polymer_entities(entity_ids:[<pdbid>]) {\
+        rcsb_id\
+        uniprots{\
+            rcsb_uniprot_accession\
+        }\
+        entity_poly{\
+            pdbx_seq_one_letter_code_can\
+        }\
+      }\
+    }'
+    # Format pbd id list for the query by capitalizing, adding "_1" for entity,
+    # and encasing in double quotes
+    pdbs = ['"'+ x.upper()+ '_1'+ '"' for x in pdb_ids_list]
+    # Join the list into a string
+    request_payload = ','.join(pdbs)
+    # Put this string into the request template
+    new_request = request_template.replace('<pdbid>', request_payload)
+    # Put request in URL and make request
+    rcsb_request = requests.get(rcsb_request_url.replace('<query>', new_request))
+    # Load Json response
+    rcsb_content = json.loads(rcsb_request.text)
+    # Extract Uniprot entry and canonical sequence from each pdbid. 
+    # Everything remains in order
+    pdb_seq = [x['entity_poly']['pdbx_seq_one_letter_code_can'] 
+               for x in rcsb_content['data']['polymer_entities']]
+    uniprot = [x['uniprots'][0]['rcsb_uniprot_accession'][0] 
+                            for x in rcsb_content['data']['polymer_entities']]
+
+    
+    uniprot_url = 'https://rest.uniprot.org/uniprotkb/<entry>.fasta'
+    seq_dict = dict()   
+    for pdbid, pdb_seq, uniprot_accession in zip(pdb_ids_list, pdb_seq, uniprot):
+            
+        uniprot_request = requests.get(uniprot_url.replace('<entry>', 
+                                                           uniprot_accession))
+        # Convert to sequence record by calling next() on the parser iterator
+        cut = uniprot_request.text.index('\n')
+        current_seq = uniprot_request.text[cut:].replace('\n', '')
+        if uniprot_align:
+            seq_dict[pdbid] = len(str(current_seq)) - len(pdb_seq)
+        else:
+            seq_dict[pdbid] = len(pdb_seq) - len(str(current_seq))
+
+    return seq_dict
+
