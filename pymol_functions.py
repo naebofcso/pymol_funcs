@@ -206,7 +206,7 @@ def keyRes(alignment, refid: str, keyPos: list[int],
     num_seq = len(alignment[:, 0])
     counts = [0]*num_seq
     if len(offset) > 1:
-        counts = offset
+        counts = offset.copy()
     # get sequence ids from the alignment file: seq.id
     # use the sequence ids/names to make a dictionary
     aligned_pos = {x.id:[] for x in alignment}
@@ -261,7 +261,7 @@ output:
     easily be adapted to an ordered data structure as needed.
 '''
 
-def get_seq_offset(pdb_ids_list: list[str], uniprot_align: bool = True) -> dict:
+def get_seq_offset(pdb_ids_list: list[str], pdb_ref: bool = True) -> dict:
     
     import json
     import requests
@@ -307,10 +307,10 @@ def get_seq_offset(pdb_ids_list: list[str], uniprot_align: bool = True) -> dict:
         # Convert to sequence record by calling next() on the parser iterator
         cut = uniprot_request.text.index('\n')
         current_seq = uniprot_request.text[cut:].replace('\n', '')
-        if uniprot_align:
-            seq_dict[pdbid] = len(str(current_seq)) - len(pdb_seq)
-        else:
+        if pdb_ref:
             seq_dict[pdbid] = len(pdb_seq) - len(str(current_seq))
+        else:
+            seq_dict[pdbid] = len(str(current_seq)) - len(pdb_seq)
 
     return seq_dict
 
